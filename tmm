@@ -1,0 +1,426 @@
+#!/usr/bin/env bash
+# tm — tmux session manager (tmm)
+# author: greedy
+# version: 1.0.0
+
+set -euo pipefail
+VERSION="1.0.0"
+
+# Colours
+C_HEADER="#7C3AED"
+C_ACCENT="#06B6D4"
+C_WARN="#F59E0B"
+C_DANGER="#EF4444"
+C_OK="#10B981"
+C_MUTED="#6B7280"
+C_TEXT="#F9FAFB"
+
+# Helpers
+_has_gum()  { command -v gum  &>/dev/null; }
+_has_tmux() { command -v tmux &>/dev/null; }
+
+_install_gum() {
+  echo
+  gum style --foreground "$C_WARN" "gum is not installed."
+  echo
+  if ! gum confirm \
+       --prompt.foreground "$C_ACCENT" \
+       --selected.background "$C_HEADER" \
+       "Install gum now?"; then
+    _info "Cancelled."
+    exit 0
+  fi
+
+  _info "Installing gum..."
+  sudo mkdir -p /etc/apt/keyrings
+  curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
+  echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list
+  sudo apt update && sudo apt install gum
+  _ok "gum installed successfully."
+}
+
+_die()  { gum style --foreground "$C_DANGER" "✗  $*" >&2; exit 1; }
+_info() { gum style --foreground "$C_ACCENT" "  $*"; }
+_ok()   { gum style --foreground "$C_OK"     "✔  $*"; }
+_warn() { gum style --foreground "$C_WARN"   "⚠  $*"; }
+
+_header() {
+  echo
+  gum style \
+    --border rounded \
+    --border-foreground "$C_HEADER" \
+    --padding "0 2" \
+    --bold \
+    --foreground "$C_TEXT" \
+    "  tmux session manager"
+  echo
+}
+
+# Session helpers
+_sessions() {
+  tmux ls 2>/dev/null | awk -F: '{print $1}' || true
+}
+
+_session_count() {
+  tmux ls 2>/dev/null | wc -l | tr -d ' '
+}
+
+_session_info() {
+  tmux ls 2>/dev/null | grep "^${1}:" || echo "${1}: unknown"
+}
+
+_in_session()     { [ -n "${TMUX:-}" ]; }
+_session_exists() { tmux has-session -t "$1" 2>/dev/null; }
+
+# Open / attach
+_attach_or_create() {
+  local name="$1"
+  if _session_exists "$name"; then
+    _ok "Attaching to session '$name'"
+    if _in_session; then
+      tmux switch-client -t "$name"
+    else
+      tmux attach-session -t "$name"
+    fi
+  else
+    _ok "Creating new session '$name'"
+    if _in_session; then
+      tmux new-session -d -s "$name" && tmux switch-client -t "$name"
+    else
+      tmux new-session -s "$name"
+    fi
+  fi
+}
+
+# Close one session
+_close_session() {
+  local name="$1"
+  echo
+  gum style --foreground "$C_WARN" "Session: $(_session_info "$name")"
+  echo
+  if gum confirm \
+       --prompt.foreground "$C_WARN" \
+       --selected.background "$C_DANGER" \
+       "Kill session '$name'?"; then
+    tmux kill-session -t "$name" && _ok "Session '$name' killed."
+  else
+    _info "Cancelled."
+  fi
+}
+
+# Rename session
+_rename_session() {
+  local old="$1"
+  echo
+  local new
+  new=$(gum input \
+          --placeholder "new session name" \
+          --prompt "  Rename '$old' → " \
+          --prompt.foreground "$C_ACCENT" \
+          --width 40)
+  [ -z "$new" ] && { _warn "No name given. Cancelled."; return; }
+  tmux rename-session -t "$old" "$new" && _ok "Renamed '$old' → '$new'"
+}
+
+# Close ALL sessions
+_close_all() {
+  local count
+  count=$(_session_count)
+
+  if [ "$count" -eq 0 ]; then
+    _warn "No active tmux sessions."
+    return
+  fi
+
+  _header
+  gum style --foreground "$C_WARN" "Active sessions ($count):"
+  _sessions | while read -r s; do
+    gum style --foreground "$C_MUTED" "  • $s"
+  done
+  echo
+
+  if gum confirm \
+       --prompt.foreground "$C_DANGER" \
+       --selected.background "$C_DANGER" \
+       "Kill ALL $count session(s)?"; then
+    tmux kill-server && _ok "All sessions terminated."
+  else
+    _info "Cancelled."
+  fi
+}
+
+# Interactive menu
+_interactive() {
+  _header
+
+  while true; do
+    local sessions
+    mapfile -t sessions < <(_sessions)
+
+    if [ ${#sessions[@]} -eq 0 ]; then
+      _warn "No active tmux sessions."
+      echo
+      if gum confirm \
+           --prompt.foreground "$C_ACCENT" \
+           --selected.background "$C_HEADER" \
+           "Create a new session?"; then
+        local name
+        name=$(gum input \
+                 --placeholder "session name" \
+                 --prompt "  Session name: " \
+                 --prompt.foreground "$C_ACCENT" \
+                 --width 40)
+        [ -n "$name" ] && _attach_or_create "$name"
+      fi
+      return
+    fi
+
+    local display=()
+    for s in "${sessions[@]}"; do
+      local line
+      line=$(tmux ls 2>/dev/null | grep "^${s}:" | sed 's/^[^:]*: //' | sed 's/created.*//' || echo "")
+      display+=("$(printf "%-20s  %s" "$s" "$line")")
+    done
+
+    # Column header
+    printf '\n'
+    gum style --foreground "$C_MUTED" "$(printf "%-20s  %s" "SESSION" "INFO")"
+    printf '\n'
+
+    # Session picker — arrow keys to navigate, enter to select
+    local chosen
+    chosen=$(printf '%s\n' "${display[@]}" | \
+               gum choose \
+                 --cursor "▶ " \
+                 --cursor.foreground "$C_ACCENT" \
+                 --selected.foreground "$C_TEXT" \
+                 --selected.background "$C_HEADER" \
+                 --height 15) || { echo; _info "Exiting."; return; }
+
+    local sel_name
+    sel_name=$(echo "$chosen" | awk '{print $1}')
+
+    # Show selected session and key hint, then read a single keypress
+    echo
+    gum style --foreground "$C_ACCENT" --bold "  $sel_name"
+    gum style --foreground "$C_MUTED"  "  o=open  c=close  r=rename  n=new  q=quit"
+    echo
+
+    local key
+    read -rn1 -p "" key </dev/tty
+
+    case "$key" in
+      o|O) _attach_or_create "$sel_name"; return ;;
+      c|C) _close_session "$sel_name" ;;
+      r|R) _rename_session "$sel_name" ;;
+      n|N)
+        local name
+        name=$(gum input \
+                 --placeholder "session name" \
+                 --prompt "  New session name: " \
+                 --prompt.foreground "$C_ACCENT" \
+                 --width 40)
+        [ -n "$name" ] && { _attach_or_create "$name"; return; }
+        ;;
+      q|Q|"") _info "Exiting."; return ;;
+      *) _warn "Unknown key '$key' — try o/c/r/n/q" ;;
+    esac
+
+    echo
+  done
+}
+
+# Installer
+_install() {
+  local install_bin="/usr/local/bin/tm"
+  local script_src
+  script_src="$(realpath "$0")"
+
+  _header
+  gum style --foreground "$C_ACCENT" --bold "  Installing tm → ${install_bin}"
+  echo
+
+  # Copy to /usr/local/bin
+  gum spin \
+    --spinner dot \
+    --spinner.foreground "$C_ACCENT" \
+    --title "Copying script to ${install_bin} …" \
+    -- sleep 0.4
+
+  if [ "$script_src" = "$install_bin" ]; then
+    _warn "Script is already at ${install_bin} — skipping copy."
+  else
+    if ! sudo cp "$script_src" "$install_bin"; then
+      _die "Failed to copy script. Do you have sudo access?"
+    fi
+    sudo chmod +x "$install_bin"
+    _ok "Copied to ${install_bin}"
+  fi
+
+  echo
+
+  # Auto-detect rc files based on current shell, then any other common ones
+  local rc_targets=()
+
+  # Primary: rc file for the running shell
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+  case "$shell_name" in
+    zsh)  [ -f "$HOME/.zshrc"  ] && rc_targets+=("$HOME/.zshrc")  ;;
+    bash) [ -f "$HOME/.bashrc" ] && rc_targets+=("$HOME/.bashrc") ;;
+    fish) [ -f "$HOME/.config/fish/config.fish" ] && rc_targets+=("$HOME/.config/fish/config.fish") ;;
+  esac
+
+  # Secondary: add any other common rc files that exist and aren't already listed
+  for _candidate in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [ -f "$_candidate" ] || continue
+    local _already=0
+    for _t in "${rc_targets[@]+"${rc_targets[@]}"}"; do
+      [ "$_t" = "$_candidate" ] && _already=1 && break
+    done
+    [ "$_already" -eq 0 ] && rc_targets+=("$_candidate")
+  done
+
+  if [ ${#rc_targets[@]} -eq 0 ]; then
+    _warn "No rc files found in \$HOME -- skipping alias setup."
+    echo
+    _ok "Installation complete. Run: tm"
+    return
+  fi
+
+  # Write alias to all detected rc files
+  local alias_line='alias tm="/usr/local/bin/tm"'
+  echo
+  for rc in "${rc_targets[@]}"; do
+    if grep -qF 'alias tm=' "$rc" 2>/dev/null; then
+      _warn "Alias already present in ${rc} -- skipping."
+    else
+      printf '\n# tm -- tmux session manager\n%s\n' "$alias_line" >> "$rc"
+      _ok "Alias added to ${rc}"
+    fi
+  done
+
+  echo
+  gum style \
+    --border rounded \
+    --border-foreground "$C_OK" \
+    --padding "0 3" \
+    --foreground "$C_OK" \
+    --bold \
+    "  Installation complete!"
+  echo
+  gum style --foreground "$C_MUTED" \
+"  Reload your shell to activate the alias:
+    source ~/.bashrc   or   source ~/.zshrc
+
+  Then just run:  tm"
+  echo
+}
+
+_uninstall() {
+  local install_bin="/usr/local/bin/tm"
+
+  _header
+  gum style --foreground "$C_WARN" --bold "  Uninstalling tm"
+  echo
+
+  if [ ! -f "$install_bin" ]; then
+    _warn "tm not found at ${install_bin} — already uninstalled?"
+    return
+  fi
+
+  if gum confirm \
+       --prompt.foreground "$C_DANGER" \
+       --selected.background "$C_DANGER" \
+       "Remove ${install_bin}?"; then
+    sudo rm -f "$install_bin"
+    _ok "Removed ${install_bin}"
+  else
+    _info "Cancelled."
+    return
+  fi
+
+  echo
+
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [ -f "$rc" ] && grep -qF 'alias tm=' "$rc" 2>/dev/null; then
+      if gum confirm \
+           --prompt.foreground "$C_WARN" \
+           --selected.background "$C_DANGER" \
+           "Remove 'tm' alias from ${rc}?"; then
+        sed -i "/^alias tm=.*\/usr\/local\/bin\/tm.*$/d" "$rc"
+        sed -i "/^# tm -- tmux session manager$/d" "$rc"
+        _ok "Alias removed from ${rc}"
+      fi
+    fi
+  done
+
+  echo
+  gum style \
+    --border rounded \
+    --border-foreground "$C_OK" \
+    --padding "0 3" \
+    --foreground "$C_OK" \
+    --bold \
+    "  Uninstall complete!"
+  echo
+}
+
+# Entry point
+
+# --install is checked before everything else — doesn't require tmux running
+case "${1:-}" in
+  -v|--version)
+    echo "tm version $VERSION"
+    exit 0
+    ;;
+  --install|-i)
+    if ! _has_gum; then
+      _install_gum
+    fi
+    _install
+    exit 0
+    ;;
+  --uninstall|-u)
+    if ! _has_gum; then
+      _install_gum
+    fi
+    _uninstall
+    exit 0
+    ;;
+esac
+
+_has_gum  || { echo "Error: 'gum' is not installed. See https://github.com/charmbracelet/gum" >&2; exit 1; }
+_has_tmux || { echo "Error: 'tmux' is not installed." >&2; exit 1; }
+
+case "${1:-}" in
+  -v|--version)
+    echo "tm version $VERSION"
+    exit 0
+    ;;
+  "")
+    if ! _has_gum; then
+      _install_gum
+    fi
+    _interactive
+    ;;
+  close|kill)
+    _close_all
+    ;;
+  -h|--help)
+    _header
+    gum style --foreground "$C_MUTED" \
+"Usage:
+  tm                 — interactive session manager
+  tm <session-name>  — attach or create named session
+  tm close           — kill all sessions (with prompt)
+  tm --install       — install to /usr/local/bin + add shell alias
+  tm --uninstall     — remove from /usr/local/bin + shell alias
+  tm --version       — show version number
+  tm --help          — this help"
+    echo
+    ;;
+  *)
+    _attach_or_create "$1"
+    ;;
+esac
