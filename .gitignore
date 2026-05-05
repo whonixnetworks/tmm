@@ -1,0 +1,21 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Shell / editor artifacts
+*.swp
+*.swo
+*~
+.*.sw[a-z]
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# OS
+.Trash-*
+.nfs*
