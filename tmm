@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # tm — tmux session manager (tmm)
 # author: greedy
-# version: 1.0.0
+# version: 1.1.0
 
 set -euo pipefail
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Colours
 C_HEADER="#7C3AED"
@@ -66,7 +66,7 @@ _session_count() {
 }
 
 _session_info() {
-  tmux ls 2>/dev/null | grep "^${1}:" || echo "${1}: unknown"
+  tmux ls 2>/dev/null | awk -F: -v name="$1" '$1 == name {print; exit}' || echo "${1}: unknown"
 }
 
 _in_session()     { [ -n "${TMUX:-}" ]; }
@@ -117,7 +117,7 @@ _rename_session() {
           --placeholder "new session name" \
           --prompt "  Rename '$old' → " \
           --prompt.foreground "$C_ACCENT" \
-          --width 40)
+          --width 40) || true
   [ -z "$new" ] && { _warn "No name given. Cancelled."; return; }
   tmux rename-session -t "$old" "$new" && _ok "Renamed '$old' → '$new'"
 }
@@ -143,6 +143,16 @@ _close_all() {
        --prompt.foreground "$C_DANGER" \
        --selected.background "$C_DANGER" \
        "Kill ALL $count session(s)?"; then
+    if _in_session; then
+      _warn "You are inside tmux — current session will be killed too."
+      if ! gum confirm \
+           --prompt.foreground "$C_DANGER" \
+           --selected.background "$C_DANGER" \
+           "Continue anyway?"; then
+        _info "Cancelled."
+        return
+      fi
+    fi
     tmux kill-server && _ok "All sessions terminated."
   else
     _info "Cancelled."
@@ -169,7 +179,7 @@ _interactive() {
                  --placeholder "session name" \
                  --prompt "  Session name: " \
                  --prompt.foreground "$C_ACCENT" \
-                 --width 40)
+                 --width 40) || true
         [ -n "$name" ] && _attach_or_create "$name"
       fi
       return
@@ -178,7 +188,7 @@ _interactive() {
     local display=()
     for s in "${sessions[@]}"; do
       local line
-      line=$(tmux ls 2>/dev/null | grep "^${s}:" | sed 's/^[^:]*: //' | sed 's/created.*//' || echo "")
+      line=$(tmux ls 2>/dev/null | awk -F: -v name="$s" '$1 == name {sub(/^[^:]*: /, ""); print; exit}' | sed 's/ (created[^)]*)//' || echo "")
       display+=("$(printf "%-20s  %s" "$s" "$line")")
     done
 
@@ -197,8 +207,15 @@ _interactive() {
                  --selected.background "$C_HEADER" \
                  --height 15) || { echo; _info "Exiting."; return; }
 
-    local sel_name
-    sel_name=$(echo "$chosen" | awk '{print $1}')
+    # Match the chosen display line back to the session name via index
+    local sel_name=""
+    for i in "${!display[@]}"; do
+      if [ "${display[$i]}" = "$chosen" ]; then
+        sel_name="${sessions[$i]}"
+        break
+      fi
+    done
+    [ -z "$sel_name" ] && { _warn "Could not determine session."; continue; }
 
     # Show selected session and key hint, then read a single keypress
     echo
@@ -219,7 +236,7 @@ _interactive() {
                  --placeholder "session name" \
                  --prompt "  New session name: " \
                  --prompt.foreground "$C_ACCENT" \
-                 --width 40)
+                 --width 40) || true
         [ -n "$name" ] && { _attach_or_create "$name"; return; }
         ;;
       q|Q|"") _info "Exiting."; return ;;
@@ -342,7 +359,7 @@ _uninstall() {
 
   echo
 
-  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish"; do
     if [ -f "$rc" ] && grep -qF 'alias tm=' "$rc" 2>/dev/null; then
       if gum confirm \
            --prompt.foreground "$C_WARN" \
@@ -394,10 +411,6 @@ _has_gum  || { echo "Error: 'gum' is not installed. See https://github.com/charm
 _has_tmux || { echo "Error: 'tmux' is not installed." >&2; exit 1; }
 
 case "${1:-}" in
-  -v|--version)
-    echo "tm version $VERSION"
-    exit 0
-    ;;
   "")
     if ! _has_gum; then
       _install_gum

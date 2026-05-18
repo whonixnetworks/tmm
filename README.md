@@ -4,7 +4,7 @@
 
 A minimal interactive tmux session manager for the terminal. Replaces the need to remember tmux session commands with a keyboard-driven menu built on [gum](https://github.com/charmbracelet/gum).
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.1.0-blue)
 
 ## Features
 
@@ -46,6 +46,7 @@ tm                 Interactive session manager
 tm <session-name>  Attach to a named session, or create it if it doesn't exist
 tm close           Kill all sessions (with confirmation prompt)
 tm --install       Install to /usr/local/bin and add shell alias
+tm --uninstall     Remove from /usr/local/bin and shell alias
 tm --version       Show version number
 tm --help          Show usage
 ```
@@ -80,6 +81,12 @@ The `tm close` command calls `tmux kill-server`, which terminates all sessions a
 </details>
 
 ## Uninstall
+
+```bash
+./tmm --uninstall
+```
+
+Or manually:
 
 ```bash
 sudo rm /usr/local/bin/tm

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-05-18
+
+### Fixed
+- **Critical**: `gum input` calls no longer crash the script on Ctrl+C with `set -e`
+- **Critical**: Session names with spaces are now correctly handled in the interactive selector
+- **Critical**: Session names containing regex metacharacters (brackets, dots) no longer cause incorrect matches
+- Session info display no longer over-strips output (removes only the `created` timestamp, preserving `(attached)` status)
+- `--uninstall` now removes aliases from Fish shell config (`~/.config/fish/config.fish`) as well as bash and zsh
+- Removed duplicate `--version` case block (dead code)
+- Added safety confirmation when running `tm close` from inside a tmux session
+
+### Changed
+- Session name matching in `_session_info` and display builder now uses `awk` exact string comparison instead of regex `grep`
+- Session selector now uses index-based array matching instead of `awk '{print $1}'` parsing
+
 ## [1.0.0] - 2026-04-17
 
 ### Added
